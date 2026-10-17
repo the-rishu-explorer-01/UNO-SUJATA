@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { scroll-behavior: smooth; }
+  body { font-family: "IBM Plex Sans", system-ui, sans-serif; }
+  h1, h2, h3 { font-family: "Archivo", system-ui, sans-serif; letter-spacing: -0.01em; }
+  :focus-visible { outline: 2px solid #A9834A; outline-offset: 3px; }
+}
+
+@layer components {
+  .container-x { @apply mx-auto w-full max-w-[1280px] px-5 sm:px-8 lg:px-12; }
+  .eyebrow { @apply font-mono text-[11px] uppercase tracking-technical text-brass-deep; }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 bg-ink px-6 py-3.5 font-body text-sm font-semibold uppercase tracking-wider text-bone transition-[background-color,transform] duration-200 hover:bg-brass-deep active:translate-y-px;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 border border-ink/30 px-6 py-3.5 font-body text-sm font-semibold uppercase tracking-wider text-ink transition-[border-color,transform] duration-200 hover:border-ink active:translate-y-px;
+  }
+  .rule { @apply border-t border-line; }
+  .tech-grid {
+    background-image:
+      linear-gradient(to right, rgba(14,15,17,0.06) 1px, transparent 1px),
+      linear-gradient(to bottom, rgba(14,15,17,0.06) 1px, transparent 1px);
+    background-size: 64px 64px;
+  }
+}
+
+/* Outside the layers so these win over Tailwind's utilities (animate-pulse) and the base rules. */
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  .animate-pulse { animation: none; }
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
