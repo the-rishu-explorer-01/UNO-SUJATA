@@ -1,0 +1,366 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------- Catalogue ----------
+
+model ProductCategory {
+  id        String    @id @default(cuid())
+  slug      String    @unique
+  name      String
+  summary   String
+  sortOrder Int       @default(0)
+  archivedAt DateTime?
+  products  Product[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model Material {
+  id       String    @id @default(cuid())
+  slug     String    @unique
+  name     String
+  products Product[]
+}
+
+model Application {
+  id       String    @id @default(cuid())
+  slug     String    @unique
+  name     String
+  products Product[]
+}
+
+model ManufacturingProcess {
+  id       String    @id @default(cuid())
+  slug     String    @unique
+  name     String
+  products Product[]
+}
+
+model Product {
+  id          String          @id @default(cuid())
+  slug        String          @unique
+  name        String
+  productCode String?         @unique          // null until supplied by the client
+  productType String                            // e.g. "Pin", "Terminal"
+  description String
+  finishes    String[]        @default([])
+  verified    Boolean         @default(false)   // true once technical data is confirmed
+  published   Boolean         @default(true)    // public visibility; archive sets this to false
+  featured    Boolean         @default(false)
+  archivedAt  DateTime?
+  specifications Json         @default("[]")    // [{ label, value }] shown on the product page
+  categoryId  String
+  category    ProductCategory @relation(fields: [categoryId], references: [id])
+  materials    Material[]
+  applications Application[]
+  processes    ManufacturingProcess[]
+  images       ProductImage[]
+  files        ProductFile[]
+  rfqProducts  RFQProduct[]
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  @@index([categoryId])
+  @@index([productType])
+  @@index([published])
+}
+
+enum ProductFileKind {
+  DRAWING_2D
+  MODEL_3D
+  DOCUMENT
+}
+
+/**
+ * Drawings, 3D models and documents. Stored in a private directory and served only through the API.
+ * Private unless isPublic is set. 3D models and drawings default to private; an administrator must
+ * approve each one for public display.
+ */
+model ProductFile {
+  id           String          @id @default(cuid())
+  productId    String
+  product      Product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  kind         ProductFileKind
+  label        String
+  originalName String
+  storedName   String          @unique
+  mimeType     String
+  extension    String
+  sizeBytes    Int
+  sha256       String
+  isPublic     Boolean         @default(false)
+  sortOrder    Int             @default(0)
+  createdAt    DateTime        @default(now())
+
+  @@index([productId, kind])
+}
+
+model ProductImage {
+  id        String   @id @default(cuid())
+  productId String
+  product   Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+  url       String
+  alt       String
+  width     Int?
+  height    Int?
+  sortOrder Int      @default(0)
+
+  @@index([productId])
+}
+
+// ---------- Company content ----------
+
+model Industry {
+  id        String   @id @default(cuid())
+  slug      String   @unique
+  name      String
+  summary   String
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Capability {
+  id          String   @id @default(cuid())
+  slug        String   @unique
+  title       String
+  description String
+  sortOrder   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+// ---------- RFQ (request for quotation) ----------
+
+enum RfqStatus {
+  NEW
+  UNDER_REVIEW
+  TECHNICAL_REVIEW
+  QUOTE_PREPARED
+  CLOSED
+}
+
+/** Per-year sequence for RFQ numbers. Incremented inside the same transaction that creates the RFQ. */
+model RfqCounter {
+  year  Int @id
+  value Int @default(0)
+}
+
+model RFQ {
+  id                 String    @id @default(cuid())
+  rfqNumber          String    @unique               // RFQ-SUJ-2026-00001
+  idempotencyKey     String?   @unique               // prevents duplicate submissions on retry
+  tokenHash          String                          // SHA-256 of the lookup token; the token itself is never stored
+  name               String
+  company            String
+  email              String
+  phone              String
+  country            String
+  industry           String?
+  partNumber         String?
+  quantity           String?
+  material           String?
+  finish             String?
+  application        String?
+  deliveryRequirement String?
+  message            String
+  status             RfqStatus @default(NEW)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  attachments RFQAttachment[]
+  products    RFQProduct[]
+
+  @@index([email])
+  @@index([status])
+  @@index([createdAt])
+}
+
+/** A stored drawing belonging to a submitted RFQ. The storage name is random and never exposed. */
+model RFQAttachment {
+  id           String   @id @default(cuid())
+  rfqId        String
+  rfq          RFQ      @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  originalName String
+  storedName   String
+  mimeType     String
+  extension    String
+  sizeBytes    Int
+  sha256       String
+  createdAt    DateTime @default(now())
+
+  @@index([rfqId])
+}
+
+/** Links an RFQ to catalogue products. Names and codes are copied so the record survives catalogue edits. */
+model RFQProduct {
+  id                  String   @id @default(cuid())
+  rfqId               String
+  rfq                 RFQ      @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  productId           String?
+  product             Product? @relation(fields: [productId], references: [id], onDelete: SetNull)
+  productNameSnapshot String
+  productCodeSnapshot String?
+  categorySnapshot    String?
+
+  @@index([rfqId])
+  @@index([productId])
+}
+
+/**
+ * Files uploaded before the RFQ is submitted. Consumed on submit or removed after expiry.
+ * The id is an unguessable UUID, which is what the client sends back.
+ */
+model PendingUpload {
+  id           String   @id @default(uuid())
+  originalName String
+  storedName   String
+  mimeType     String
+  extension    String
+  sizeBytes    Int
+  sha256       String
+  createdAt    DateTime @default(now())
+  expiresAt    DateTime
+
+  @@index([expiresAt])
+}
+
+// ---------- Administration ----------
+
+enum AdminRole {
+  ADMIN
+  EDITOR
+}
+
+model AdminUser {
+  id               String         @id @default(cuid())
+  email            String         @unique
+  name             String
+  passwordHash     String         // scrypt; never the plain password
+  role             AdminRole      @default(EDITOR)
+  active           Boolean        @default(true)
+  failedLoginCount Int            @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+  sessions         AdminSession[]
+  auditEntries     AuditLog[]
+}
+
+model AdminSession {
+  id         String    @id @default(cuid())
+  userId     String
+  user       AdminUser @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String    @unique   // SHA-256 of the cookie value; the raw token is never stored
+  expiresAt  DateTime
+  revokedAt  DateTime?
+  userAgent  String?
+  ipAddress  String?
+  createdAt  DateTime  @default(now())
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+/** Append-only record of staff actions. Never edited through the application. */
+model AuditLog {
+  id         String     @id @default(cuid())
+  actorId    String?
+  actor      AdminUser? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+  action     String     // e.g. "rfq.status_changed"
+  entityType String     // e.g. "RFQ"
+  entityId   String?
+  summary    String
+  createdAt  DateTime   @default(now())
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+/** CMS content, one row per key (homepage.hero, about, contact, ...). Validated per key by the API. */
+model SiteContent {
+  key         String   @id
+  value       Json
+  updatedAt   DateTime @updatedAt
+  updatedById String?
+}
+
+enum ContactStatus {
+  NEW
+  HANDLED
+}
+
+model ContactEnquiry {
+  id        String        @id @default(cuid())
+  name      String
+  email     String
+  company   String?
+  message   String
+  status    ContactStatus @default(NEW)
+  createdAt DateTime      @default(now())
+  handledAt DateTime?
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// ---------- Resources and FAQ ----------
+
+enum ResourceType {
+  CATALOGUE
+  TECHNICAL
+  BROCHURE
+  QUALITY
+  APPLICATION
+}
+
+/**
+ * A downloadable document. A row can only be published when a file has been uploaded and checked,
+ * so the public page never links to a document that does not exist.
+ */
+model Resource {
+  id          String       @id @default(cuid())
+  slug        String       @unique
+  title       String
+  type        ResourceType
+  description String
+  fileUrl     String?      // /media/<name>.pdf, set only after a valid upload
+  fileName    String?      // name shown to the download
+  sizeBytes   Int?
+  published   Boolean      @default(false)
+  sortOrder   Int          @default(0)
+  updatedAt   DateTime     @updatedAt
+  createdAt   DateTime     @default(now())
+
+  @@index([type, published])
+}
+
+enum FaqCategory {
+  ORDERING
+  CUSTOM_PARTS
+  MATERIALS
+  DRAWINGS
+  RFQ_PROCESS
+  QUALITY
+  PACKAGING
+}
+
+model FaqEntry {
+  id        String      @id @default(cuid())
+  question  String
+  answer    String
+  category  FaqCategory
+  published Boolean     @default(false)
+  sortOrder Int         @default(0)
+  updatedAt DateTime    @updatedAt
+  createdAt DateTime    @default(now())
+
+  @@index([category, published])
+}
